@@ -1,4 +1,4 @@
-# Coral hardcover
+# Coral hard cover
 
 ## Overview
 

@@ -1,0 +1,497 @@
+---
+title: "STAT3926/STAT4026: Statistical Consulting"
+subtitle: "Hard Coral Cover"
+author:
+  - "Prepared by: 510288769"
+title-block-banner: "#d85f33"
+date: "`r format(Sys.time(), '%d %B, %Y %H:%M')`"
+format: 
+  html: 
+    include-in-header:
+      - style/www/back-to-top.html
+      - style/www/progressbar.html
+    theme:
+      light: [united, style/custom_styles.scss]
+      dark: [darkly, style/custom_styles.scss]
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+    includes:
+      in-header: style/www/header.html 
+    unsafe: true
+    smooth-scroll: true
+table-of-contents: true
+number-sections: false
+engine: knitr
+css: style/custom_styles.css
+execute: 
+  echo: false
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(imputeTS)
+library(zoo)
+library(forecast)
+library(naniar)
+library(kableExtra)
+library(lme4)
+library(DT)
+library(ggpubr)
+library(car)
+
+```
+
+## Executive Summary
+
+This report offers three different analyses on hard coral cover (HCC) and maximum annual Degree Heating Weeks (DHW) across a range of  granularity from sectors to individual reefs. A significant interaction effect was identified between the annual change in percentage of coral cover across different morphotypes and DHW severity levels. Additionally, a precise short-term forecasting model was developed to predict HCC in various sectors based on the maximum annual DHW. Finally, by accounting for any potentially unique characteristics of each reef, the relationship between each reef’s HCC and the maximum DHW was modeled, enabling a detailed exploration of the impacts of DHW on HCC.
+
+## Background
+Monitoring the Great Barrier Reef involves recording the HCC of three coral morphotypes alongside temperature data. The client stated that elevated DHW increase the likelihood of a coral bleaching event, which can significantly impact coral coverage. It was also noted that while bleaching events can severely decrease the coral coverage, they do not inevitably result in coral death, allowing for the possibility of recovery.
+
+## Client's Aims
+The client specified several areas of interest for extracting insights from the data. The report concentrates on a select few key topics:
+
+1.  Assessing the resilience and recovery rates of each morphotype across various sectors
+
+2.  Forecasting the HCC based on the current trend along with implementing other predictors
+
+3.  Developing a model to predict HCC based on DHW at each reef
+
+## Data
+
+In this analysis, focus was placed exclusively on sectors with mostly completed reef data. Four sectors, CG, PC, IN, and PO, were excluded due to large data gaps that compromised the reliability of the estimates. This exclusion was crucial to maintain data integrity, as interpolation was implemented to preserve as much data value as possible. Moreover, additional steps were taken to minimize the impact of interpolation on the analysis. This included eliminating locations where a specific combination of reef, transect, and site exhibited more than two consecutive missing values. As a result, subsequent analyses primarily utilized aggregated data at the reef or sector level.
+
+```{r, warning = FALSE, echo = FALSE}
+reef = read.csv("Reef0D_Master_Filev2.csv")
+
+reef <- reef %>%
+  mutate(location = paste(REEF, SITE, TRANSECT, sep = " "))
+
+reef_cleaned_sector <- reef %>%
+  filter(!SECTOR %in% c("CG", "PC", "IN", "PO"))
+
+reef_cleaned_other_sector <- reef %>%
+  filter(SECTOR %in% c("CG", "PC", "IN", "PO"))
+
+unique_location = reef_cleaned_sector$location %>% unique()
+unique_sector = reef_cleaned_sector$SECTOR %>% unique()
+
+# reef_grouped <- reef %>%
+#   group_by(SECTOR, YEAR, REGION) %>%
+#   summarize(across(where(is.numeric), mean, na.rm = TRUE))
+
+interpolated_reef = data.frame()
+
+check_consecutive_NAs <- function(x, max_consec = 2) {
+  runs <- rle(is.na(x))
+  any(runs$lengths[runs$values] > max_consec)
+}
+
+i = 0
+interpolated_reef = data.frame()
+
+for (loc in unique_location){
+  sector_reef = reef_cleaned_sector %>% 
+    filter(location == loc) %>%
+    arrange(YEAR)
+
+  # Check for consecutive NAs
+  if (check_consecutive_NAs(sector_reef$Complex) ||
+      check_consecutive_NAs(sector_reef$Top.heavy) ||
+      check_consecutive_NAs(sector_reef$Simple)) {
+    i = i+1
+    next  
+  }
+
+  # Interpolation for Complex
+  if (any(!is.na(sector_reef$Complex))) {
+    complex <- zoo(sector_reef$Complex, order.by = sector_reef$YEAR)
+    complex <- na.approx(complex, rule = 2)  
+    sector_reef$Complex <- coredata(complex)  
+  }
+  
+  # Interpolation for Top.heavy
+  if (any(!is.na(sector_reef$Top.heavy))) {
+    top_heavy <- zoo(sector_reef$Top.heavy, order.by = sector_reef$YEAR)
+    top_heavy <- na.approx(top_heavy, rule = 2)
+    sector_reef$Top.heavy <- coredata(top_heavy)
+  }
+  
+  # Interpolation for Simple
+  if (any(!is.na(sector_reef$Simple))) {
+    simple <- zoo(sector_reef$Simple, order.by = sector_reef$YEAR)
+    simple <- na.approx(simple, rule = 2)
+    sector_reef$Simple <- coredata(simple)
+  }
+  
+  # Calculate HCC
+  sector_reef$HCC = sector_reef$Simple + sector_reef$Complex + sector_reef$Top.heavy
+  
+  # Append to the result dataframe
+  interpolated_reef <- rbind(interpolated_reef, sector_reef)
+}
+
+
+reef_grouped = interpolated_reef %>% group_by(YEAR, SECTOR) %>%
+  summarize(across(where(is.numeric), ~mean(., na.rm = TRUE)), .groups = "drop")
+ 
+
+reef_grouped_reef = interpolated_reef %>% group_by(YEAR, REEF) %>%
+  summarize(across(where(is.numeric), ~mean(., na.rm = TRUE)), .groups = "drop")
+
+reef_grouped_w_pct_change = reef_grouped%>%
+  group_by(SECTOR) %>%
+  mutate(pct_change = (lag(HCC) - HCC))
+
+reef_reef_grouped_w_pct_change = reef_grouped_reef%>%
+  group_by(REEF) %>%
+  mutate(pct_change = (lag(HCC) - HCC)/abs(HCC)) %>% drop_na()
+morpotypes_reef_long = reef_reef_grouped_w_pct_change  %>% pivot_longer(cols = c("Complex", "Top.heavy", "Simple"),
+                                                   names_to = "Morphotypes", 
+                                                   values_to = "Coral_cover")
+
+
+sector_morphotypes = reef_grouped %>% pivot_longer(cols = c("Complex", "Top.heavy", "Simple"),
+                                                   names_to = "Morphotypes", 
+                                                   values_to = "Coral_cover")
+```
+
+## 2-Way ANOVA
+
+A two-way ANOVA was conducted to explore the effects of DHW severity and coral morphotypes on the absolute percentage change in HCC, which examines coral recovery across various reefs. This analysis aims to ascertain whether the impact of DHW severity on the percentage change in HCC varies among different morphotypes. This analysis calculates the percentage change in HCC by taking the difference between the new and old HCC values. Given the logical assumption that severity levels and morphotypes might affect each other, an interaction effect between the two variables was also tested. 
+
+Under this test, the null hypothesis is: 
+$$H_0: \text{There is no interaction between DWH and Morphotypes} $$ 
+The alternative hypothesis is: 
+$$H_1: \text{There is an interaction between DWH and Morphotypes} $$
+
+The classification of DHW severity into distinct levels was based on the associated risk of coral bleaching. Three categories were defined: "Low" for 0 to less than 4 DHW, where the risk is minimal; "Medium" for 4 to less than 8 DHW, indicating a moderate risk; and "High" for 8 to 12 DHW, representing a significant risk of bleaching as it is known that coral bleaching risks increase when DHW values exceed 4. 
+
+### Results
+```{r, fig.height= 4, fig.width=10, warning= FALSE, message= FALSE, echo = FALSE}
+library(kableExtra)
+library(emmeans)
+reef_morpotypes_w_pct_change <- reef_grouped_reef %>%
+  group_by(REEF) %>% arrange(YEAR) %>%
+  mutate(
+    pct_hcc = lag(HCC) - HCC,
+    `Complex Coral` = Complex - lag(Complex) ,
+     `Top Heavy Coral` = Top.heavy- lag(Top.heavy) ,
+    `Simple Coral` = Simple - lag(Simple)) %>% drop_na()
+
+morpotypes_reef_pct_change_long = reef_morpotypes_w_pct_change  %>% 
+  pivot_longer(cols = c("Complex Coral", "Top Heavy Coral", "Simple Coral"),
+                                                   names_to = "Morphotypes", 
+                                                   values_to = "pct_change")
+
+morpotypes_reef_pct_change_long = morpotypes_reef_pct_change_long %>% dplyr::select(YEAR, DHW_max, Morphotypes, pct_change)
+
+breaks <- c(0, 4, 8, 12)
+morpotypes_reef_pct_change_long$`DHW severity` <- cut(morpotypes_reef_pct_change_long$DHW_max, breaks=breaks, include.lowest=TRUE, right=FALSE, labels=c("Low", "Medium", "High"))
+
+model = lm(pct_change ~ `DHW severity` * Morphotypes, data = morpotypes_reef_pct_change_long)
+aov = anova(model) 
+
+model2 = lm(pct_change ~  `DHW severity`, data = morpotypes_reef_pct_change_long)
+aov2 = anova(model2) 
+
+aov_rounded <- aov %>% as.data.frame()
+aov_rounded$`Mean Sq` <- round(aov_rounded$`Mean Sq`, 2)
+aov_rounded$`Sum Sq` <- round(aov_rounded$`Sum Sq`, 2)
+aov_rounded$`F value` <- round(aov_rounded$`F value`, 2)
+aov_rounded$`Pr(>F)` <- round(aov_rounded$`Pr(>F)`, 2)
+
+aov_rounded$`F value` <- as.character(aov_rounded$`F value`)  
+aov_rounded$`F value`[is.na(aov_rounded$`F value`)] <- ""
+
+aov_rounded$`Pr(>F)` <- as.character(aov_rounded$`Pr(>F)`)  
+aov_rounded$`Pr(>F)`[is.na(aov_rounded$`Pr(>F)`)] <- ""
+rownames(aov_rounded) = gsub("`", "", rownames(aov_rounded))
+
+```
+
+```{r, fig.width=14, fig.height=6}
+datMean <- morpotypes_reef_pct_change_long %>% 
+  group_by(`DHW severity`, Morphotypes) %>%
+  summarize(`Mean HCC Change (%)` = mean(pct_change), .groups = "drop")
+# Interaction plot
+ggplot(datMean, aes(x = `DHW severity`, y = `Mean HCC Change (%)`, color = Morphotypes)) +
+  geom_point(size = 3) + geom_line(aes(group = Morphotypes)) + geom_hline(yintercept = 0, linetype = "dashed", color = "black") + 
+  theme_bw() +ggtitle("Figure 1: Interaction Plot of Morphotypes under different DHW severity levels against average HCC change (%)") +
+  theme(legend.text = element_text(size = 12),  
+        legend.key.size = unit(1.5, "lines"),
+        strip.text = element_text(size = 16),
+        axis.text.x = element_text(size = 12),  # Adjust x-axis tick text size and angle
+        axis.title.x = element_text(size = 14),
+        axis.text.y = element_text(size = 12),  # Adjust x-axis tick text size and angle
+        axis.title.y = element_text(size = 14),
+        plot.title = element_text(size = 15, face = "bold"))   
+```
+
+### Discussion
+
+The ANOVA table in the appendix indicates that the interaction effect between DHW severity classification and coral morphotypes is significant, with a p-value of 0.04. This significant result leads us to reject the null hypothesis and conclude that both the severity of DHW and morphotypes significantly affect the absolute percentage change in coral cover at each reef. Importantly, due to the significance of the interaction effect, the main effects of DHW severity and morphotypes should not be interpreted in isolation. Ignoring the interaction could lead to incorrect conclusions, as the combined effect of these variables influences the outcome differently than each would individually.
+
+Figure 1 displays the interaction plot of morphotypes under different DHW severity levels and their corresponding changes in average HCC. The graph illustrates that at low DHW severity, all morphotypes exhibit little to no change in HCC, though it is noted that top heavy was the only morphotype that increased in HCC. At medium severity, Top Heavy Coral shows a notable increase in HCC, contrasting with a relatively small increase observed in Simple Coral and a moderate increase in Complex Coral. This trend shifts dramatically at high severity, where both Top Heavy Coral and Complex Coral experience similar declines in HCC, while Simple Coral shows a more significant decrease. This pattern suggests that Top Heavy Coral displayed greater resilience at low to medium DHW levels but is still susceptible to severe impacts at high DHW levels, similar to Complex Coral.
+
+It is important to note that although some of the assumptions required for ANOVA are violated (see appendix), ANOVA is still considered a generally robust test under certain violation conditions.
+
+## ARIMAX
+
+Forecasting was conducted using the ARIMAX model, as it allowed for the incorporation of the maximum annual DHW as an predictor variable while also acknowledging that past values influence present HCC. After evaluating various models, the ARIMAX model using DHW only as the predictor demonstrated better performance based on diagnostic criteria, hence was chosen.
+
+### Results
+
+```{r, fig.width= 6}
+# TO_reef_grouped = reef_grouped %>% filter(SECTOR == "TO")
+# unique_sector = reef_grouped$SECTOR %>% unique()
+forecast = data.frame()
+pacf_lists = list()
+for (sector in unique_sector){
+  sector_reef = reef_grouped %>% filter(SECTOR == sector) %>% arrange(YEAR)
+
+  train_data = sector_reef %>% filter(YEAR <= "2019")
+  test_data = sector_reef %>% filter(YEAR > "2019")
+  
+  regressors_train <- as.matrix(train_data[, c("DHW_max")])
+  regressors_test <- as.matrix(test_data[, c("DHW_max")])
+  
+  # fit <- auto.arima(train_data$HCC, xreg = regressors_train, start.p = 1)
+  # print(summary(fit))
+  # pred <- forecast(fit, xreg = regressors_test) %>% as.data.frame()
+  
+  fit_complex = auto.arima(train_data$Complex, xreg = regressors_train, start.p = 1)
+  pred_complex <- forecast(fit_complex, xreg = regressors_test) %>% as.data.frame()
+  colnames(pred_complex) = c("com_forecast", "com_80_lo", "com_80_hi", "com_95_lo", "com_95_hi")
+           
+  fit_simple = auto.arima(train_data$Simple, xreg = regressors_train, start.p = 1)
+  pred_simple <- forecast(fit_simple, xreg = regressors_test) %>% as.data.frame()
+  colnames(pred_simple) = c("simp_forecast", "simp_80_lo", "simp_80_hi", "simp_95_lo", "simp_95_hi")
+
+  fit_top = auto.arima(train_data$Top.heavy, xreg = regressors_train, start.p = 1)
+  pred_top <- forecast(fit_top, xreg = regressors_test) %>% as.data.frame()
+  colnames(pred_top) = c("top_forecast", "top_80_lo", "top_80_hi", "top_95_lo", "top_95_hi")
+
+  all_predictions = cbind(pred_complex, pred_simple, pred_top)
+  
+  test_data = cbind(test_data, all_predictions)
+
+  # all_data = bind_rows(train_data, test_data)
+  forecast = rbind(forecast, test_data)
+}
+
+```
+
+```{r, fig.height= 12,fig.width=10}
+
+p1 = ggplot() +
+  geom_point(data = reef_grouped, aes(y = Complex, x = YEAR, color = SECTOR)) + 
+  geom_line(data = reef_grouped, aes(y = Complex, x = YEAR, color = SECTOR, linetype = "Actual")) + 
+  geom_ribbon(data = forecast, aes(x = YEAR, ymin = com_95_lo, ymax = com_95_hi, alpha = "95% Confidence Interval"), fill = "navy") +
+  geom_ribbon(data = forecast, aes(x = YEAR, ymin = com_80_lo, ymax = com_80_hi, alpha = "80% Confidence Interval"), fill = "navy") +
+  geom_line(data = forecast, aes(y = com_forecast, x = YEAR, linetype = "Forecasted") ) + 
+  geom_point(data = forecast, aes(y = com_forecast, x = YEAR)) +
+  facet_wrap(~SECTOR, scales = "free_y", ncol = 3) +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(min(reef_grouped$YEAR), max(reef_grouped$YEAR), by = 2),
+                     labels = seq(min(reef_grouped$YEAR), max(reef_grouped$YEAR), by = 2)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5), legend.position = "bottom") +
+  scale_alpha_manual(name = "", values = c("95% Confidence Interval" = 0.1, "80% Confidence Interval" = 0.2)) +
+  scale_linetype_manual(name = "", values = c("Actual" = "solid", "Forecasted" = "dashed")) +guides(color = "none") + ylab("Coral Cover (%)") + xlab("Year") + ggtitle("Complex Coral Cover Forecast with ARIMAX") +
+  theme(legend.text = element_text(size = 10),  
+        legend.key.size = unit(1.5, "lines"),
+        strip.text = element_text(size = 10),
+        axis.text.x = element_text(size = 10),  # Adjust x-axis tick text size and angle
+        axis.title.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),  # Adjust x-axis tick text size and angle
+        axis.title.y = element_text(size = 10),
+        plot.title = element_text(size = 10, face = "bold"))   + theme(legend.position = "None")
+
+p3 = ggplot() +
+  geom_point(data = reef_grouped, aes(y = Top.heavy, x = YEAR, color = SECTOR)) + 
+  geom_line(data = reef_grouped, aes(y = Top.heavy, x = YEAR, color = SECTOR, linetype = "Actual")) + 
+  geom_ribbon(data = forecast, aes(x = YEAR, ymin = top_95_lo, ymax = top_95_hi, alpha = "95% Confidence Interval"), fill = "navy") +
+  geom_ribbon(data = forecast, aes(x = YEAR, ymin = top_80_lo, ymax = top_80_hi, alpha = "80% Confidence Interval"), fill = "navy") +
+  geom_line(data = forecast, aes(y = top_forecast, x = YEAR, linetype = "Forecasted") ) + 
+  geom_point(data = forecast, aes(y = top_forecast, x = YEAR)) +
+  facet_wrap(~SECTOR, scales = "free_y", ncol = 3) +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(min(reef_grouped$YEAR), max(reef_grouped$YEAR), by = 2),
+                     labels = seq(min(reef_grouped$YEAR), max(reef_grouped$YEAR), by = 2)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5), legend.position = "bottom") +
+  scale_alpha_manual(name = "", values = c("95% Confidence Interval" = 0.1, "80% Confidence Interval" = 0.2)) +
+  scale_linetype_manual(name = "", values = c("Actual" = "solid", "Forecasted" = "dashed")) +guides(color = "none") + ylab("Coral Cover (%)") + xlab("Year") + ggtitle("Simple Coral Cover Forecast with ARIMAX") +
+  theme(legend.text = element_text(size = 10),  
+        legend.key.size = unit(1.5, "lines"),
+        strip.text = element_text(size = 10),
+        axis.text.x = element_text(size = 10),  # Adjust x-axis tick text size and angle
+        axis.title.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),  # Adjust x-axis tick text size and angle
+        axis.title.y = element_text(size = 10),
+        plot.title = element_text(size = 10, face = "bold"))  + theme(legend.position = "bottom")
+
+p2 = ggplot() +
+  geom_point(data = reef_grouped, aes(y = Simple, x = YEAR, color = SECTOR)) + 
+  geom_line(data = reef_grouped, aes(y = Simple, x = YEAR, color = SECTOR, linetype = "Actual")) + 
+  geom_ribbon(data = forecast, aes(x = YEAR, ymin = simp_95_lo, ymax = simp_95_hi, alpha = "95% Confidence Interval"), fill = "navy") +
+  geom_ribbon(data = forecast, aes(x = YEAR, ymin = simp_80_lo, ymax = simp_80_hi, alpha = "80% Confidence Interval"), fill = "navy") +
+  geom_line(data = forecast, aes(y = simp_forecast, x = YEAR, linetype = "Forecasted") ) + 
+  geom_point(data = forecast, aes(y = simp_forecast, x = YEAR)) +
+  facet_wrap(~SECTOR, scales = "free_y", ncol = 3) +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(min(reef_grouped$YEAR), max(reef_grouped$YEAR), by = 2),
+                     labels = seq(min(reef_grouped$YEAR), max(reef_grouped$YEAR), by = 2)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5), legend.position = "bottom") +
+  scale_alpha_manual(name = "", values = c("95% Confidence Interval" = 0.1, "80% Confidence Interval" = 0.2)) +
+  scale_linetype_manual(name = "", values = c("Actual" = "solid", "Forecasted" = "dashed")) +guides(color = "none") + ylab("Coral Cover (%)") + xlab("Year") + ggtitle("Top Heavy Coral Cover Forecast with ARIMAX") +
+  theme(legend.text = element_text(size = 10),  
+        legend.key.size = unit(1.5, "lines"),
+        strip.text = element_text(size = 10),
+        axis.text.x = element_text(size = 10),  # Adjust x-axis tick text size and angle
+        axis.title.x = element_text(size = 10),
+        axis.text.y = element_text(size = 10),  # Adjust x-axis tick text size and angle
+        axis.title.y = element_text(size = 10),
+        plot.title = element_text(size = 10, face = "bold"))+ theme(legend.position = "None")
+
+# plot_list <- list("Complex Coral" = p1, "Simple Coral" =  p2, "Top Heavy Coral" =  p3)
+all.plots = ggarrange(p1, p2, p3, ncol = 1)
+title <- expression(bold("Figure 2: Forecasting of each Morphotype at each Sector"))
+annotate_figure(all.plots,
+                fig.lab.pos = "top.left",
+                fig.lab = "Figure 2: Forecasting of each Morphotype at each Sector",
+                fig.lab.face = "bold",
+                top = " ")
+
+```
+
+### Discussion
+
+The forecasts generated by the ARIMAX model, as depicted in Figure 2 and detailed in the result tables in the appendix, demonstrate relatively accurate predictions across different sectors and morphotypes. However, there are several limitations to this approach. To provide accurate forecasts into the future, future values of DHW must be available. Additionally, the model does not account for other impactful events such as natural disasters, which can significantly affect coral cover. Consequently, while the model performs well for short-term forecasting, its long-term predictive accuracy is limited.
+
+## Mixed Effect Models
+
+To model the HCC in order to get an equation based on DWH, it was noted that data collected from multiple reef sites are geographically proximate to each other. This raises a concern about the non-independence of observations, as environmental events or conditions could similarly affect closely located reefs within an area; hence, a mixed-effect model was chosen to provide a model for each reef. A mixed effect model allows for individual variations at each reef, thus providing a more accurate representation of the influence of DHW on HCC across the different sites. This provided a higher level of granularity and also acknowledges that different reefs might have different baseline levels of HCC and responses to changes in the max DHW. Furthermore, the client mentioned that the DWH and coral coverage were not linear, so several polynomial terms were introduced to model a non-linear relationship.
+
+### Results
+```{r, fig.width = 20, fig.height= 20}
+reef_cleaned_sector$REEF = as.factor(reef_cleaned_sector$REEF)
+reef_cleaned_sector = reef_cleaned_sector %>% drop_na()
+reef_cleaned_sector$SECTOR = as.factor(reef_cleaned_sector$SECTOR)
+reef_cleaned_sector$sector_reef = paste0(reef_cleaned_sector$SECTOR, " ",reef_cleaned_sector$REEF)
+reef_cleaned_sector <- reef_cleaned_sector %>%
+  arrange(SECTOR, REEF)
+fit1 <- lmer(HCC ~  DHW_max + I(DHW_max^2) + I(DHW_max^3) + (DHW_max|REEF), data = reef_cleaned_sector)
+
+pred_fit <- predict(fit1)
+
+reef_cleaned_sector$pred_lmm = pred_fit 
+reef_cleaned_sector %>% ggplot(aes(x = DHW_max, y = HCC, color = SECTOR)) + 
+  geom_point() +
+  geom_line(aes(x = DHW_max, y = pred_lmm, linetype = "Fitted Line"),color = "black", linewidth = 1) +
+  facet_wrap(~sector_reef, scales = "free", ncol = 6) +
+  theme_bw() + ylab("HCC") + xlab("Annual max DHW") + 
+  guides(colour = guide_legend(title = NULL)) + ggtitle("Figure 3: Random Slopes and Intercept model for different reefs") +
+  theme(legend.text = element_text(size = 18),  
+        legend.key.size = unit(1.5, "lines"),
+        strip.text = element_text(size = 16),
+        axis.text.x = element_text(size = 18),  # Adjust x-axis tick text size and angle
+        axis.title.x = element_text(size = 20),
+        axis.text.y = element_text(size = 18),  # Adjust x-axis tick text size and angle
+        axis.title.y = element_text(size = 20),
+        plot.title = element_text(size = 24, face = "bold"),
+        legend.position = "bottom") + guides(color = "none")+
+  scale_linetype_manual("", values = c("Fitted Line" = "solid")) # Adjust the legend
+```
+
+### Discussion
+
+It can be seen that even though different reefs had different intercepts and slopes, in most sectors, such as the CL, CB, and CA sectors, the reefs share the same general trend within that sector. However, within other sectors, like the TO sector, each reef seems more individualized in its trend.
+
+This model was selected after comparing diagnostic tests across other potential models. It performed better when DHW was included as both quadratic and cubic terms to capture the general trend across all reefs. Furthermore, the specific equations for how each reef's HCC reacted to the maximum DHW can be derived by summing the fixed (general) effects and the random (reef-specific) effects, using the model's estimated coefficients provided in the appendix.
+
+## Conclusion
+
+To conclude, the report explored three different analyses concerning coral coverage and DHW. The results suggested an interaction effect between the different levels of severity in terms of DHW, which leads to coral bleaching, and the morphotypes by looking at the average absolute annual change in percentage. Moreover, forecasting seems to be better when done in extremely short periods as it allows the model to emphasize the last value more, which helps mitigate any unprecedented external factors that the model can’t capture. Finally, the mixed model allows for reef-specific equations to be extracted using only DHW as a predictor. As several models such as the ARIMAX have a few limitations, further work would include inputting another factor that can represent whether there was an impactful event or not, which would help with the predicting ability.
+
+## Reflection
+
+This unit encouraged me to seek and learn new statistical techniques actively. While I am familiar with linear forecasting models, this project required me to explore and learn about the characteristics of ARIMAX in order to decide whether it is acceptable. It allowed for more complex data exploration, broadened my analytical toolkit, and helped me better grasp time series. I am grateful for the plentiful opportunities that allowed me to gain more expertise based on staff feedback during our projects, which helped me further develop my statistical foundation and critical thinking skills, as some of the projects I was working on required an understanding of a topic that I would not have learned in other units.
+
+## Appendix
+
+### ANOVA results
+
+```{r}
+aov_rounded %>% 
+  kbl(caption = "ANOVA: Absolute percent change under different stress levels and morphotypes", escape = T) %>%
+  kable_classic_2(full_width = T, html_font = "Times New Roman Bold", font_size = 16)
+```
+
+### Testing ANOVA assumptions
+
+```{r}
+qqnorm(resid(model), main = "Q-Q Plot of Residuals")
+qqline(resid(model), col = "red", lwd = 2)
+leveneTest(model) %>% as.data.frame() %>% 
+  kbl(caption = "Testing Homoskedacity", escape = T) %>%
+  kable_classic_2(full_width = T, html_font = "Times New Roman Bold", font_size = 16)
+```
+
+### ARIMAX Performance
+```{r}
+mse_table = forecast %>% 
+  group_by(SECTOR) %>% 
+  summarise(
+    `MSE Complex` = mean((com_forecast - Complex)^2, na.rm = TRUE),
+    `MSE Simple` = mean((simp_forecast - Simple)^2, na.rm = TRUE),
+    `MSE Top heavy` = mean((top_forecast - Top.heavy)^2, na.rm = TRUE)
+  )
+mse_table$`MSE Complex` = mse_table$`MSE Complex` %>% round(2)
+mse_table$`MSE Simple` = mse_table$`MSE Simple` %>% round(2)
+mse_table$`MSE Top heavy` = mse_table$`MSE Top heavy` %>% round(2)
+# colnames(mse_table) = c("Sector", "Complex", "Simple", "Top heavy")
+
+mse_table %>% 
+  kbl(caption = "Morphotypes MSE in each Sector", escape = T) %>%
+  kable_classic_2(full_width = T, html_font = "Times New Roman Bold", font_size = 16)  
+
+```
+
+### Fitting Mixed-Effect Models
+
+```{r, echo = FALSE, message = FALSE}
+library(sjPlot)
+tab_model(fit1)
+```
+
+### Random Effects Slope and Intercept from Mixed-Effect Model
+
+```{r}
+random_eff = ranef(fit1)
+random_eff = random_eff$REEF
+random_eff$DHW_max = random_eff$DHW_max %>% round(2)
+random_eff$`(Intercept)` = random_eff$`(Intercept)` %>% round(2)
+datatable(
+  random_eff,
+  options = list(pageLength = 10),  # Sets the number of rows per page
+  caption = htmltools::tags$caption(style = 'caption-side: bottom; text-align: center;', 'Random effects of mixed-models')
+)
+```
+
+### Mixed Effect Model MSE
+
+```{r}
+reef_summary = reef_cleaned_sector %>% group_by(REEF) %>% summarise(
+  MSE = mean((pred_lmm-HCC)^2) %>% round(2)
+)
+
+datatable(
+  reef_summary,
+  options = list(pageLength = 10),  # Sets the number of rows per page
+  caption = htmltools::tags$caption(style = 'caption-side: bottom; text-align: center;', 'MSE of mixed-models')
+) 
+```

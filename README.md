@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project investigates the relationship between Hard Coral Cover (HCC) and thermal stress (measured as Degree Heating Weeks, DHW) across the Great Barrier Reef. It was conducted as part of the Statistical Consulting unit at the University of Sydney. The analysis spans multiple statistical methods to evaluate coral resilience, predict future coral cover, and model reef-specific ecological responses.
+This project investigates the relationship between Hard Coral Cover (HCC) and thermal stress (measured as Degree Heating Weeks, DHW) across the Great Barrier Reef. It was conducted as part of the Statistical Consulting unit at the University of Sydney. The analysis spans multiple statistical methods to evaluate coral resilience, predict future coral cover, and model reef-specific ecological responses. Please open the report.html to see the discussion based on the results.
 
 ## Objectives
 
@@ -42,4 +42,3 @@ This project investigates the relationship between Hard Coral Cover (HCC) and th
 
 ![image](https://github.com/user-attachments/assets/64013f4f-fad7-473d-ac20-63bc9d2ac9fa)
 
-Please open the report.html to see more details

@@ -25,22 +25,21 @@ This project investigates the relationship between Hard Coral Cover (HCC) and th
 - Explored the interaction between DHW severity (Low, Medium, High) and coral morphotype on HCC percentage change.
 - Significant interaction effect observed (p = 0.04), indicating that morphotype responses vary by DHW level.
 
+![image](https://github.com/user-attachments/assets/43f3b856-d2ab-499d-bdac-9f8c6761b494)
+
 ### 2. ARIMAX Model
 - Time series model incorporating DHW as an exogenous variable.
 - Evaluated different model configurations, selecting the best based on diagnostics.
 - Best suited for short-term forecasting due to dependency on future DHW estimates.
+- 
+![image](https://github.com/user-attachments/assets/4c81cc74-aba6-4938-a279-2319a0fab41a)
+
 
 ### 3. Mixed-Effect Models
 - Accounts for non-independence among geographically clustered reefs.
 - Modeled HCC as a polynomial function of DHW (linear, quadratic, and cubic terms).
 - Generated reef-specific equations using random effects.
 
-## Key Results
+![image](https://github.com/user-attachments/assets/64013f4f-fad7-473d-ac20-63bc9d2ac9fa)
 
-- **ANOVA**: Morphotypes respond differently to varying DHW levels; Top Heavy coral shows resilience under low to moderate stress.
-- **ARIMAX**: Provides accurate short-term forecasts; limitations include reliance on future DHW values and external factors.
-- **Mixed Model**: Reveals nonlinear relationships and reef-specific trends; Conditional R² = 0.354 indicates moderate model fit.
-
-## Conclusion
-
-This analysis highlights the complex interplay between coral types and thermal stress, providing insights into reef health under climate change. The modeling approach enables better-informed conservation strategies and forecasting tools.
+Please open the report.html to see more details

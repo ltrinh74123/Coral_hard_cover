@@ -1,10 +1,8 @@
 ---
-title: "STAT3926/STAT4026: Statistical Consulting"
-subtitle: "Hard Coral Cover"
+title: "Hard Coral Cover Report"
 author:
-  - "Prepared by: 510288769"
+  - "Prepared by: Linh"
 title-block-banner: "#d85f33"
-date: "`r format(Sys.time(), '%d %B, %Y %H:%M')`"
 format: 
   html: 
     include-in-header:
@@ -417,9 +415,6 @@ This model was selected after comparing diagnostic tests across other potential 
 
 To conclude, the report explored three different analyses concerning coral coverage and DHW. The results suggested an interaction effect between the different levels of severity in terms of DHW, which leads to coral bleaching, and the morphotypes by looking at the average absolute annual change in percentage. Moreover, forecasting seems to be better when done in extremely short periods as it allows the model to emphasize the last value more, which helps mitigate any unprecedented external factors that the model can’t capture. Finally, the mixed model allows for reef-specific equations to be extracted using only DHW as a predictor. As several models such as the ARIMAX have a few limitations, further work would include inputting another factor that can represent whether there was an impactful event or not, which would help with the predicting ability.
 
-## Reflection
-
-This unit encouraged me to seek and learn new statistical techniques actively. While I am familiar with linear forecasting models, this project required me to explore and learn about the characteristics of ARIMAX in order to decide whether it is acceptable. It allowed for more complex data exploration, broadened my analytical toolkit, and helped me better grasp time series. I am grateful for the plentiful opportunities that allowed me to gain more expertise based on staff feedback during our projects, which helped me further develop my statistical foundation and critical thinking skills, as some of the projects I was working on required an understanding of a topic that I would not have learned in other units.
 
 ## Appendix
 
